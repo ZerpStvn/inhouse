@@ -1,0 +1,1 @@
+console.log("cwd:", process.cwd()); console.log("__dirname:", __dirname); console.log("resolve electron:", require.resolve("electron")); const e = require("electron"); console.log("type of e:", typeof e); console.log("e:", e); if(typeof e === "object" && e.app){ e.app.quit(); } else { process.exit(1); }

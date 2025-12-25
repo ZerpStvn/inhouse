@@ -1,0 +1,28 @@
+services:
+  # Backend API Service
+  - type: web
+    name: secure-exam-api
+    runtime: node
+    region: singapore  # Change to your preferred region
+    plan: free
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm run db:push && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EXIT_PASSWORD
+        value: your-secure-admin-password  # Change this!
+      - key: DATABASE_URL
+        fromDatabase:
+          name: secure-exam-db
+          property: connectionString
+      - key: ADMIN_URL
+        value: https://your-admin-panel.onrender.com  # Update after deploying admin
+
+databases:
+  - name: secure-exam-db
+    plan: free
+    region: singapore  # Same region as the service

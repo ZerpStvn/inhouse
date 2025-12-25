@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:main:*)",
+      "Bash(npx electron .)",
+      "Bash(cat:*)",
+      "Bash(node -e:*)",
+      "Bash(npx electron:*)",
+      "Bash(npm ls:*)",
+      "Bash(\"node_modules/.bin/electron\" .)",
+      "Bash(dir:*)",
+      "Bash(node node_modules/electron/cli.js:*)",
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" \"c:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\")",
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" \"c:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\test-electron.js\")",
+      "Bash(npm uninstall:*)",
+      "Bash(npm install:*)",
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" .)",
+      "Bash(ls:*)",
+      "Bash(cmd /c \"node_modules\\\\electron\\\\dist\\\\electron.exe client\")",
+      "Bash(powershell -Command:*)",
+      "Bash(curl:*)",
+      "Bash(node_moduleselectrondistelectron.exe client)",
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" --version)",
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" --version)",
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" \"c:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\test-electron.js\")",
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" \"c:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\")",
+      "Bash(npm run build:renderer:*)",
+      "Bash(npm run dist:win:*)"
+    ]
+  }
+}
