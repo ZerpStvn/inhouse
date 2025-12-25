@@ -6,28 +6,16 @@ import studentRoutes from './routes/student';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Allowed origins for CORS
-const allowedOrigins = [
-  'http://localhost:5173',  // Admin dev
-  'http://localhost:5174',  // Client dev
-  process.env.ADMIN_URL,    // Admin production
-  process.env.CLIENT_ORIGIN, // Client production (Electron)
-].filter(Boolean) as string[];
-
-// Middleware
+// CORS - Allow all origins for now
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like Electron apps, mobile apps, curl)
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true,
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+// Handle preflight requests
+app.options('*', cors());
 app.use(express.json());
 
 // Request logging
