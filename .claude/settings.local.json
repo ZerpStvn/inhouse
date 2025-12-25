@@ -25,7 +25,9 @@
       "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" \"c:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\test-electron.js\")",
       "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" \"c:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\")",
       "Bash(npm run build:renderer:*)",
-      "Bash(npm run dist:win:*)"
+      "Bash(npm run dist:win:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

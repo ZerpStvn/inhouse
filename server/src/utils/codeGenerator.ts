@@ -1,13 +1,15 @@
-import { customAlphabet } from 'nanoid';
+import crypto from 'crypto';
 
 // Create a custom alphabet without ambiguous characters (0, O, I, l, 1)
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-// Generate a 6-character code
-const generateCode = customAlphabet(alphabet, 6);
-
 export function generateAccessCode(): string {
-  return generateCode();
+  let code = '';
+  const bytes = crypto.randomBytes(6);
+  for (let i = 0; i < 6; i++) {
+    code += alphabet[bytes[i] % alphabet.length];
+  }
+  return code;
 }
 
 export function formatCode(code: string): string {
