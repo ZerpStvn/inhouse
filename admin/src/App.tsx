@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import CreateSession from './pages/CreateSession';
 import SessionDetail from './pages/SessionDetail';
 import EditSession from './pages/EditSession';
+import LiveMonitor from './pages/LiveMonitor';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -91,6 +92,14 @@ function AppRoutes() {
         element={
           <PrivateRoute>
             <EditSession />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/sessions/:id/monitor"
+        element={
+          <PrivateRoute>
+            <LiveMonitor />
           </PrivateRoute>
         }
       />

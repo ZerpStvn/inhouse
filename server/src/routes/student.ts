@@ -1,9 +1,13 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { normalizeCode } from '../utils/codeGenerator';
+import { Server } from 'socket.io';
 
 const router = Router();
 const prisma = new PrismaClient();
+
+// Helper to get Socket.IO instance
+const getIO = (req: any): Server => req.app.get('io');
 
 // Validate access code and get session info
 router.post('/validate-code', async (req, res) => {
@@ -111,6 +115,23 @@ router.post('/start-attempt', async (req, res) => {
     // Return session info with attempt
     const allowedUrls = JSON.parse(session.allowedUrls);
 
+    // Emit real-time event for new student joining
+    const io = getIO(req);
+    const studentData = {
+      attemptId: attempt.id,
+      studentName: studentName || 'Anonymous',
+      studentId: studentId || null,
+      sessionId: session.id,
+      sessionName: session.name,
+      startedAt: attempt.startedAt,
+      status: 'active',
+      violations: [],
+      lastActivity: new Date().toISOString(),
+    };
+
+    io.to(`session:${sessionId}`).emit('student-joined', studentData);
+    io.to('all-sessions').emit('student-joined', studentData);
+
     res.status(201).json({
       attemptId: attempt.id,
       sessionId: session.id,
@@ -136,6 +157,14 @@ router.post('/report-violation', async (req, res) => {
 
     const attempt = await prisma.examAttempt.findUnique({
       where: { id: attemptId },
+      include: {
+        session: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
     });
 
     if (!attempt) {
@@ -147,13 +176,16 @@ router.post('/report-violation', async (req, res) => {
       ? JSON.parse(attempt.violations)
       : [];
 
-    // Add new violation with timestamp
-    existingViolations.push({
+    // Create violation object with timestamp
+    const newViolation = {
       type: violation.type,
       description: violation.description,
       timestamp: new Date().toISOString(),
       details: violation.details || null,
-    });
+    };
+
+    // Add new violation
+    existingViolations.push(newViolation);
 
     // Update attempt with new violation
     await prisma.examAttempt.update({
@@ -162,6 +194,21 @@ router.post('/report-violation', async (req, res) => {
         violations: JSON.stringify(existingViolations),
       },
     });
+
+    // Emit real-time violation event
+    const io = getIO(req);
+    const violationData = {
+      attemptId,
+      studentName: attempt.studentName || 'Anonymous',
+      studentId: attempt.studentId,
+      sessionId: attempt.session.id,
+      sessionName: attempt.session.name,
+      violation: newViolation,
+      totalViolations: existingViolations.length,
+    };
+
+    io.to(`session:${attempt.session.id}`).emit('violation', violationData);
+    io.to('all-sessions').emit('violation', violationData);
 
     res.json({ message: 'Violation reported' });
   } catch (error) {
@@ -181,6 +228,14 @@ router.post('/end-attempt', async (req, res) => {
 
     const attempt = await prisma.examAttempt.findUnique({
       where: { id: attemptId },
+      include: {
+        session: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
     });
 
     if (!attempt) {
@@ -191,13 +246,30 @@ router.post('/end-attempt', async (req, res) => {
       return res.status(400).json({ error: 'Attempt already ended' });
     }
 
+    const newStatus = reason === 'completed' ? 'completed' : 'terminated';
+
     const updatedAttempt = await prisma.examAttempt.update({
       where: { id: attemptId },
       data: {
-        status: reason === 'completed' ? 'completed' : 'terminated',
+        status: newStatus,
         endedAt: new Date(),
       },
     });
+
+    // Emit real-time event for student leaving
+    const io = getIO(req);
+    const leaveData = {
+      attemptId,
+      studentName: attempt.studentName || 'Anonymous',
+      studentId: attempt.studentId,
+      sessionId: attempt.session.id,
+      sessionName: attempt.session.name,
+      status: newStatus,
+      endedAt: updatedAttempt.endedAt,
+    };
+
+    io.to(`session:${attempt.session.id}`).emit('student-left', leaveData);
+    io.to('all-sessions').emit('student-left', leaveData);
 
     res.json({
       message: 'Attempt ended',
@@ -206,6 +278,44 @@ router.post('/end-attempt', async (req, res) => {
   } catch (error) {
     console.error('End attempt error:', error);
     res.status(500).json({ error: 'Failed to end attempt' });
+  }
+});
+
+// Heartbeat - student sends periodic updates
+router.post('/heartbeat', async (req, res) => {
+  try {
+    const { attemptId } = req.body;
+
+    if (!attemptId) {
+      return res.status(400).json({ error: 'Attempt ID is required' });
+    }
+
+    const attempt = await prisma.examAttempt.findUnique({
+      where: { id: attemptId },
+      include: {
+        session: {
+          select: {
+            id: true,
+          },
+        },
+      },
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ error: 'Attempt not found' });
+    }
+
+    // Emit heartbeat to admin
+    const io = getIO(req);
+    io.to(`session:${attempt.session.id}`).emit('student-heartbeat', {
+      attemptId,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json({ status: 'ok' });
+  } catch (error) {
+    console.error('Heartbeat error:', error);
+    res.status(500).json({ error: 'Failed to process heartbeat' });
   }
 });
 

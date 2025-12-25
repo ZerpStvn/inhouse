@@ -29,6 +29,7 @@ let powerSaveBlockerId: number | null = null;
 let isInExamMode = false;
 let allowedUrls: string[] = [];
 let attemptId: string | null = null;
+let focusInterval: NodeJS.Timeout | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
@@ -128,6 +129,51 @@ function createExamWindow(urls: string[]) {
   examWindow.on('closed', () => {
     examWindow = null;
   });
+
+  // Monitor for focus loss and re-focus immediately
+  examWindow.on('blur', () => {
+    if (isInExamMode && examWindow) {
+      // Report violation
+      reportViolation('focus_lost', 'Exam window lost focus - possible attempt to switch applications');
+
+      // Immediately re-focus the exam window
+      setTimeout(() => {
+        if (examWindow && isInExamMode) {
+          examWindow.focus();
+          examWindow.setAlwaysOnTop(true, 'screen-saver');
+        }
+      }, 100);
+    }
+  });
+
+  // Start focus monitoring interval
+  startFocusMonitoring();
+}
+
+function startFocusMonitoring() {
+  if (focusInterval) {
+    clearInterval(focusInterval);
+  }
+
+  // Continuously ensure the exam window stays on top and focused
+  focusInterval = setInterval(() => {
+    if (isInExamMode && examWindow) {
+      const isFocused = examWindow.isFocused();
+
+      if (!isFocused) {
+        examWindow.focus();
+        examWindow.setAlwaysOnTop(true, 'screen-saver');
+        examWindow.moveTop();
+      }
+    }
+  }, 500);
+}
+
+function stopFocusMonitoring() {
+  if (focusInterval) {
+    clearInterval(focusInterval);
+    focusInterval = null;
+  }
 }
 
 function setupUrlFiltering() {
@@ -239,6 +285,9 @@ ipcMain.handle('admin-exit', async (_, password: string) => {
 
 async function exitExamMode() {
   isInExamMode = false;
+
+  // Stop focus monitoring
+  stopFocusMonitoring();
 
   // Stop process monitor
   if (processMonitor) {

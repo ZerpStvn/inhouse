@@ -67,6 +67,10 @@ export const studentApi = {
     const response = await api.get(`/student/attempt/${attemptId}/status`);
     return response.data;
   },
+
+  heartbeat: async (attemptId: string): Promise<void> => {
+    await api.post('/student/heartbeat', { attemptId });
+  },
 };
 
 export default api;

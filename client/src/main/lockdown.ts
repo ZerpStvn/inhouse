@@ -12,6 +12,8 @@ export function setupLockdown() {
   if (isWindows) {
     disableTaskManager();
     disableAltTab();
+    blockWindowsFeatures();
+    hideTaskbar();
   }
 }
 
@@ -19,6 +21,8 @@ export function cleanupLockdown() {
   if (isWindows) {
     enableTaskManager();
     enableAltTab();
+    unblockWindowsFeatures();
+    showTaskbar();
   }
 }
 
@@ -125,5 +129,39 @@ export function unblockWindowsFeatures() {
     );
   } catch (error) {
     console.error('Failed to unblock Windows features:', error);
+  }
+}
+
+// Hide the Windows taskbar during exam
+export function hideTaskbar() {
+  if (!isWindows) return;
+
+  try {
+    // Use PowerShell to hide the taskbar
+    exec(
+      'powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Shell_TrayWnd\',\'\'); [Native.Win32]::ShowWindow($h,0)"'
+    );
+    // Also hide the Start button
+    exec(
+      'powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Button\',\'Start\'); if($h -ne 0){[Native.Win32]::ShowWindow($h,0)}"'
+    );
+  } catch (error) {
+    console.error('Failed to hide taskbar:', error);
+  }
+}
+
+// Show the Windows taskbar after exam
+export function showTaskbar() {
+  if (!isWindows) return;
+
+  try {
+    exec(
+      'powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Shell_TrayWnd\',\'\'); [Native.Win32]::ShowWindow($h,1)"'
+    );
+    exec(
+      'powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Button\',\'Start\'); if($h -ne 0){[Native.Win32]::ShowWindow($h,1)}"'
+    );
+  } catch (error) {
+    console.error('Failed to show taskbar:', error);
   }
 }

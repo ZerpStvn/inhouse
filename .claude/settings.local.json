@@ -27,7 +27,11 @@
       "Bash(npm run build:renderer:*)",
       "Bash(npm run dist:win:*)",
       "Bash(npm run build:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(npm run:*)",
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" .)"
     ]
   }
 }
