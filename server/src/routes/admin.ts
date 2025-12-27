@@ -370,4 +370,64 @@ router.post('/attempts/:id/terminate', authMiddleware, async (req: AuthRequest, 
   }
 });
 
+// Get recent violations across all admin's sessions
+router.get('/violations/recent', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    // Get all sessions for this admin
+    const sessions = await prisma.examSession.findMany({
+      where: { adminId: req.adminId },
+      select: { id: true },
+    });
+
+    const sessionIds = sessions.map(s => s.id);
+
+    // Get all attempts with violations for these sessions
+    const attempts = await prisma.examAttempt.findMany({
+      where: {
+        sessionId: { in: sessionIds },
+        violations: { not: null },
+      },
+      include: {
+        session: {
+          select: {
+            name: true,
+          },
+        },
+      },
+      orderBy: { startedAt: 'desc' },
+    });
+
+    // Extract and flatten all violations with student info
+    const allViolations: any[] = [];
+
+    for (const attempt of attempts) {
+      if (attempt.violations) {
+        const violations = JSON.parse(attempt.violations);
+        for (const v of violations) {
+          allViolations.push({
+            id: `${attempt.id}-${v.timestamp}`,
+            attemptId: attempt.id,
+            studentName: attempt.studentName || 'Anonymous',
+            studentId: attempt.studentId,
+            sessionName: attempt.session.name,
+            type: v.type,
+            description: v.description,
+            details: v.details,
+            timestamp: v.timestamp,
+          });
+        }
+      }
+    }
+
+    // Sort by timestamp descending and limit to recent 50
+    allViolations.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const recentViolations = allViolations.slice(0, 50);
+
+    res.json(recentViolations);
+  } catch (error) {
+    console.error('Get violations error:', error);
+    res.status(500).json({ error: 'Failed to get violations' });
+  }
+});
+
 export default router;

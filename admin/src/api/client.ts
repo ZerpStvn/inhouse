@@ -69,6 +69,18 @@ export interface ExamAttempt {
   sessionId: string;
 }
 
+export interface Violation {
+  id: string;
+  attemptId: string;
+  studentName: string;
+  studentId: string | null;
+  sessionName: string;
+  type: string;
+  description: string;
+  details: string | null;
+  timestamp: string;
+}
+
 // Auth API
 export const authApi = {
   login: async (email: string, password: string) => {
@@ -132,6 +144,14 @@ export const sessionsApi = {
   },
   terminateAttempt: async (attemptId: string): Promise<ExamAttempt> => {
     const response = await api.post(`/admin/attempts/${attemptId}/terminate`);
+    return response.data;
+  },
+};
+
+// Violations API
+export const violationsApi = {
+  getRecent: async (): Promise<Violation[]> => {
+    const response = await api.get('/admin/violations/recent');
     return response.data;
   },
 };

@@ -13,8 +13,12 @@ let appIsReady = false;
 let focusInterval = null;
 let processMonitorInterval = null;
 let lastForegroundApp = null;
-let lastBlurTime = null;
 let keyboardHookProcess = null;
+let lastViolationTime = 0;
+let lastViolationType = null;
+let lastViolationDetails = null;
+let violationCount = 0;
+const VIOLATION_COOLDOWN = 1500; // 1.5 seconds between same violation type
 
 const isDev = !app.isPackaged;
 const isWindows = process.platform === 'win32';
@@ -32,8 +36,8 @@ function setupLockdown() {
   // Disable Windows key
   exec('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v NoWinKeys /t REG_DWORD /d 1 /f');
 
-  // Hide the taskbar
-  hideTaskbar();
+  // Don't hide taskbar - fullscreen covers it anyway and detection still works
+  // hideTaskbar();
 }
 
 function cleanupLockdown() {
@@ -48,18 +52,24 @@ function cleanupLockdown() {
   // Re-enable Windows key
   exec('reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" /v NoWinKeys /f');
 
-  // Show the taskbar
-  showTaskbar();
+  // Taskbar not hidden, no need to show
+  // showTaskbar();
 }
 
 function hideTaskbar() {
   if (!isWindows) return;
+  // Hide main taskbar
   exec('powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Shell_TrayWnd\',\'\'); [Native.Win32]::ShowWindow($h,0)"');
+  // Also hide secondary taskbar (for multi-monitor)
+  exec('powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Shell_SecondaryTrayWnd\',\'\'); [Native.Win32]::ShowWindow($h,0)"');
 }
 
 function showTaskbar() {
   if (!isWindows) return;
-  exec('powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Shell_TrayWnd\',\'\'); [Native.Win32]::ShowWindow($h,1)"');
+  // Show main taskbar
+  exec('powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Shell_TrayWnd\',\'\'); [Native.Win32]::ShowWindow($h,5)"');
+  // Also show secondary taskbar
+  exec('powershell -Command "$p=\'[DllImport(\\\"user32.dll\\\")] public static extern int FindWindow(string className, string windowName); [DllImport(\\\"user32.dll\\\")] public static extern int ShowWindow(int hwnd, int nCmdShow);\'; Add-Type -MemberDefinition $p -Name Win32 -Namespace Native; $h=[Native.Win32]::FindWindow(\'Shell_SecondaryTrayWnd\',\'\'); [Native.Win32]::ShowWindow($h,5)"');
 }
 
 function startFocusMonitoring() {
@@ -67,23 +77,25 @@ function startFocusMonitoring() {
     clearInterval(focusInterval);
   }
 
+  // Very minimal monitoring - only refocus when truly necessary
   focusInterval = setInterval(() => {
-    if (isInExamMode && examContentWindow) {
-      // Always ensure exam window is on top
-      examContentWindow.setAlwaysOnTop(true, 'screen-saver');
+    if (!isInExamMode) return;
+    if (!examContentWindow || examContentWindow.isDestroyed()) return;
 
-      if (!examContentWindow.isFocused() && !examWindow?.isFocused()) {
-        // Re-focus the exam window
-        examContentWindow.show();
-        examContentWindow.focus();
-        examContentWindow.moveTop();
-        if (examWindow) {
-          examWindow.show();
-          examWindow.moveTop();
-        }
-      }
+    const contentFocused = examContentWindow.isFocused();
+    const controlFocused = examWindow && !examWindow.isDestroyed() && examWindow.isFocused();
+
+    // Only refocus if neither window has focus AND we're in exam mode
+    if (!contentFocused && !controlFocused) {
+      // Just focus content window, don't touch alwaysOnTop
+      examContentWindow.focus();
     }
-  }, 200); // Check more frequently
+
+    // Ensure control bar stays visible (just moveTop, no setAlwaysOnTop)
+    if (examWindow && !examWindow.isDestroyed()) {
+      examWindow.moveTop();
+    }
+  }, 2000); // Check much less frequently - every 2 seconds
 }
 
 function stopFocusMonitoring() {
@@ -179,24 +191,18 @@ function startProcessMonitoring() {
 
   processMonitorInterval = setInterval(() => {
     if (!isInExamMode) return;
-
-    // Check for task switcher/task view
-    detectTaskSwitcher();
+    if (!examContentWindow || examContentWindow.isDestroyed()) return;
 
     // First check if our window lost focus
-    const ourWindowFocused = (examContentWindow && examContentWindow.isFocused()) ||
-                             (examWindow && examWindow.isFocused());
+    const contentFocused = examContentWindow.isFocused();
+    const controlFocused = examWindow && !examWindow.isDestroyed() && examWindow.isFocused();
+    const ourWindowFocused = contentFocused || controlFocused;
 
     if (!ourWindowFocused) {
       // Our window is not focused - try to detect what app has focus
       getForegroundAppName((appName) => {
         if (!appName) {
-          // Couldn't detect app, but we know focus was lost
-          if (lastForegroundApp !== 'unknown') {
-            lastForegroundApp = 'unknown';
-            reportViolation('app_opened', 'Attempted to open: Another Application', 'unknown');
-          }
-          // Re-focus exam window
+          // Re-focus exam window without reporting if we can't detect app
           forceExamWindowFocus();
           return;
         }
@@ -210,8 +216,6 @@ function startProcessMonitoring() {
 
           // Report violation with the app name
           reportViolation('app_opened', `Attempted to open: ${displayName}`, appName);
-
-          console.log(`Detected app switch to: ${displayName} (${appName})`);
         }
 
         // Re-focus exam window if not allowed app
@@ -223,21 +227,27 @@ function startProcessMonitoring() {
       // Our window is focused, reset the last app tracker
       lastForegroundApp = null;
     }
-  }, 300);
+  }, 1000); // Check every 1 second for violations
 }
 
-// Force exam window to front
+// Force exam window to front (debounced to prevent flicker)
+let lastForceFocusTime = 0;
 function forceExamWindowFocus() {
-  if (examContentWindow) {
-    examContentWindow.setAlwaysOnTop(true, 'screen-saver');
-    examContentWindow.show();
+  const now = Date.now();
+  // Debounce - don't force focus more than once per 1 second
+  if (now - lastForceFocusTime < 1000) return;
+  lastForceFocusTime = now;
+
+  if (examContentWindow && !examContentWindow.isDestroyed()) {
     examContentWindow.focus();
-    examContentWindow.moveTop();
   }
-  if (examWindow) {
-    examWindow.setAlwaysOnTop(true, 'screen-saver');
-    examWindow.show();
-    examWindow.moveTop();
+  // Always ensure control bar is on top after any focus change
+  if (examWindow && !examWindow.isDestroyed()) {
+    setTimeout(() => {
+      if (examWindow && !examWindow.isDestroyed()) {
+        examWindow.moveTop();
+      }
+    }, 50);
   }
 }
 
@@ -467,12 +477,13 @@ function createExamWindow(urls) {
 
   // Get screen dimensions for fullscreen
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds;
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const { x: screenX, y: screenY } = primaryDisplay.bounds;
 
   // Create the exam content window (the actual exam URL)
   examContentWindow = new BrowserWindow({
-    x: 0,
-    y: 0,
+    x: screenX,
+    y: screenY,
     width: screenWidth,
     height: screenHeight,
     fullscreen: true,
@@ -487,27 +498,37 @@ function createExamWindow(urls) {
     alwaysOnTop: true,
     skipTaskbar: true,
     focusable: true,
+    show: false, // Don't show until ready
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       devTools: isDev,
-      // Allow the exam site to work normally
       webSecurity: true,
     },
     title: 'Exam',
   });
 
-  // Set always on top at highest level
-  examContentWindow.setAlwaysOnTop(true, 'screen-saver');
+  // Set always on top - use 'floating' which is lower than control bar's 'pop-up-menu'
+  examContentWindow.setAlwaysOnTop(true, 'floating');
 
   // Load the exam URL directly
   examContentWindow.loadURL(urls[0]);
 
   // Once loaded, ensure it's visible and on top
   examContentWindow.webContents.once('did-finish-load', () => {
+    // Ensure fullscreen and kiosk mode
+    examContentWindow.setFullScreen(true);
+    examContentWindow.setKiosk(true);
     examContentWindow.show();
     examContentWindow.focus();
-    examContentWindow.setAlwaysOnTop(true, 'screen-saver');
+
+    // Make sure control bar is on top of exam window (only once at startup)
+    if (examWindow) {
+      setTimeout(() => {
+        examWindow.show();
+        examWindow.moveTop();
+      }, 200);
+    }
   });
 
   examContentWindow.on('close', (e) => {
@@ -585,32 +606,25 @@ function createExamWindow(urls) {
     examContentWindow = null;
   });
 
-  // Monitor for focus loss and report violations
+  // Monitor for focus loss - very minimal, let process monitoring handle violations
   examContentWindow.on('blur', () => {
-    if (isInExamMode && examContentWindow) {
-      lastBlurTime = Date.now();
+    if (!isInExamMode || !examContentWindow || examContentWindow.isDestroyed()) return;
 
-      // Only report if neither exam window nor control bar is focused
-      setTimeout(() => {
-        if (isInExamMode && examContentWindow && !examContentWindow.isFocused() && (!examWindow || !examWindow.isFocused())) {
-          // Check what has focus now
-          detectTaskSwitcherOnBlur();
-
-          // Re-focus immediately
-          forceExamWindowFocus();
-        }
-      }, 50);
+    // Ensure control bar stays on top when content loses focus
+    if (examWindow && !examWindow.isDestroyed()) {
+      examWindow.moveTop();
     }
   });
 
   // Create a control bar window at top-right corner
-  // Note: primaryDisplay and screenWidth already defined above
+  // Get full screen bounds (not work area, since we're in fullscreen/kiosk mode)
+  const fullBounds = primaryDisplay.bounds;
 
   examWindow = new BrowserWindow({
-    width: 300,
-    height: 60,
-    x: screenWidth - 310,
-    y: 10,
+    width: 320,
+    height: 130, // Height for main bar + violation counter + message
+    x: fullBounds.x + fullBounds.width - 330,
+    y: fullBounds.y + 10,
     frame: false,
     autoHideMenuBar: true,
     resizable: false,
@@ -622,6 +636,8 @@ function createExamWindow(urls) {
     skipTaskbar: true,
     transparent: true,
     focusable: true,
+    show: false, // Don't show until ready
+    hasShadow: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -631,8 +647,9 @@ function createExamWindow(urls) {
     title: 'Exam Controls',
   });
 
-  // Set the window to be on top of fullscreen windows
-  examWindow.setAlwaysOnTop(true, 'screen-saver');
+  // Use 'pop-up-menu' level which is above fullscreen but less aggressive than screen-saver
+  examWindow.setAlwaysOnTop(true, 'pop-up-menu');
+  examWindow.setVisibleOnAllWorkspaces(true);
 
   if (isDev) {
     examWindow.loadURL('http://localhost:5174/#/exam-controls');
@@ -640,24 +657,62 @@ function createExamWindow(urls) {
     examWindow.loadFile(path.join(__dirname, 'dist/renderer/index.html'), { hash: '/exam-controls' });
   }
 
-  examWindow.on('closed', () => {
-    examWindow = null;
+  // Show control bar once loaded and keep it visible
+  examWindow.webContents.once('did-finish-load', () => {
+    examWindow.show();
+    examWindow.moveTop();
+
+    // Periodically ensure control bar stays on top (non-aggressive)
+    setInterval(() => {
+      if (examWindow && !examWindow.isDestroyed() && isInExamMode) {
+        examWindow.moveTop();
+      }
+    }, 500);
   });
 
-  // Keep control bar on top when exam window gains focus
-  examContentWindow.on('focus', () => {
-    if (examWindow) {
-      examWindow.moveTop();
-    }
+  examWindow.on('closed', () => {
+    examWindow = null;
   });
 }
 
 function reportViolation(type, description, details) {
-  if (!attemptId || !examWindow) return;
+  // Check if examWindow exists
+  if (!examWindow || examWindow.isDestroyed()) {
+    console.log('reportViolation: examWindow not available');
+    return;
+  }
+
+  const now = Date.now();
+  // Debounce same violation type AND same details - prevent spam
+  // Different apps or different shortcuts should still count as separate violations
+  const isSameViolation = type === lastViolationType && details === lastViolationDetails;
+  if (isSameViolation && now - lastViolationTime < VIOLATION_COOLDOWN) {
+    return; // Skip duplicate violations within cooldown period
+  }
+
+  lastViolationTime = now;
+  lastViolationType = type;
+  lastViolationDetails = details;
+  violationCount++;
+
+  console.log('reportViolation:', type, description, 'Total:', violationCount);
+
+  // Send violation to control bar UI (no separate modal needed)
   examWindow.webContents.send('report-violation', {
-    attemptId,
+    attemptId: attemptId || 'test-attempt',
     violation: { type, description, details },
   });
+}
+
+function escapeHtml(text) {
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  };
+  return text.replace(/[&<>"']/g, m => map[m]);
 }
 
 function registerBlockedShortcuts() {
@@ -784,8 +839,8 @@ ipcMain.handle('start-exam', async (_, data) => {
   // Start process monitoring to detect other apps
   startProcessMonitoring();
 
-  // Start low-level keyboard hook for Alt+Tab/Win+Tab detection
-  startKeyboardHook();
+  // Note: Keyboard hook disabled - causes too much spam and flicker
+  // The globalShortcut registration handles most shortcuts
 
   return { success: true };
 });
@@ -843,6 +898,9 @@ async function exitExamMode() {
     examWindow = null;
   }
 
+  // Reset violation count
+  violationCount = 0;
+
   createMainWindow();
 }
 
@@ -870,6 +928,27 @@ app.on('before-quit', () => {
   stopProcessMonitoring();
   stopKeyboardHook();
   cleanupLockdown();
+});
+
+// Emergency cleanup on any exit
+process.on('exit', () => {
+  cleanupLockdown();
+});
+
+process.on('SIGINT', () => {
+  cleanupLockdown();
+  process.exit();
+});
+
+process.on('SIGTERM', () => {
+  cleanupLockdown();
+  process.exit();
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  cleanupLockdown();
+  process.exit(1);
 });
 
 // Single instance

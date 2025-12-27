@@ -31,7 +31,10 @@
       "Bash(netstat:*)",
       "Bash(findstr:*)",
       "Bash(npm run:*)",
-      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" .)"
+      "Bash(\"C:\\\\Users\\\\user\\\\Desktop\\\\inhouse\\\\client\\\\node_modules\\\\electron\\\\dist\\\\electron.exe\" .)",
+      "Bash(node -c:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd violation feed to admin dashboard\n\n- Add GET /admin/violations/recent endpoint to fetch recent violations\n- Add violation feed panel to Dashboard with auto-refresh every 5 seconds\n- Update client control bar to show violation messages inline\n- Increase control bar height to accommodate violation messages\n- Fix violation counting to track different apps separately\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }

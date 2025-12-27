@@ -1,18 +1,24 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
-import { sessionsApi, ExamSession } from '../api/client';
+import { sessionsApi, violationsApi, ExamSession, Violation } from '../api/client';
 
 export default function Dashboard() {
   const [sessions, setSessions] = useState<ExamSession[]>([]);
+  const [violations, setViolations] = useState<Violation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   useEffect(() => {
     loadSessions();
-    const interval = setInterval(loadSessions, 30000);
-    return () => clearInterval(interval);
+    loadViolations();
+    const sessionsInterval = setInterval(loadSessions, 30000);
+    const violationsInterval = setInterval(loadViolations, 5000); // Refresh violations every 5 seconds
+    return () => {
+      clearInterval(sessionsInterval);
+      clearInterval(violationsInterval);
+    };
   }, []);
 
   const loadSessions = async () => {
@@ -23,6 +29,52 @@ export default function Dashboard() {
       setError('Failed to load sessions');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadViolations = async () => {
+    try {
+      const data = await violationsApi.getRecent();
+      setViolations(data);
+    } catch (err) {
+      console.error('Failed to load violations:', err);
+    }
+  };
+
+  const formatTimeAgo = (timestamp: string) => {
+    const now = new Date();
+    const time = new Date(timestamp);
+    const diffMs = now.getTime() - time.getTime();
+    const diffSecs = Math.floor(diffMs / 1000);
+    const diffMins = Math.floor(diffSecs / 60);
+    const diffHours = Math.floor(diffMins / 60);
+
+    if (diffSecs < 60) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return time.toLocaleDateString();
+  };
+
+  const getViolationIcon = (type: string) => {
+    switch (type) {
+      case 'app_opened':
+        return (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        );
+      case 'shortcut_blocked':
+        return (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        );
+      default:
+        return (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        );
     }
   };
 
@@ -156,8 +208,10 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Sessions Table */}
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Sessions Table - Takes 2 columns */}
+          <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-200">
             <h2 className="text-lg font-semibold text-slate-900">Exam Sessions</h2>
           </div>
@@ -298,6 +352,62 @@ export default function Dashboard() {
               </tbody>
             </table>
           )}
+          </div>
+
+          {/* Violation Feed - Takes 1 column */}
+          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Violation Feed</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">Real-time alerts from students</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  <span className="text-xs text-slate-500">Live</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="max-h-[500px] overflow-y-auto">
+              {violations.length === 0 ? (
+                <div className="text-center py-12 text-slate-500">
+                  <svg className="w-10 h-10 text-slate-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-sm">No violations yet</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {violations.map((violation) => (
+                    <div key={violation.id} className="px-4 py-3 hover:bg-slate-50 transition-colors">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-shrink-0 w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center text-red-600">
+                          {getViolationIcon(violation.type)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-slate-900 text-sm truncate">
+                              {violation.studentName}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              {formatTimeAgo(violation.timestamp)}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-600 mt-0.5 truncate">
+                            {violation.description}
+                          </p>
+                          <p className="text-xs text-slate-400 mt-1">
+                            {violation.sessionName}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </Layout>
