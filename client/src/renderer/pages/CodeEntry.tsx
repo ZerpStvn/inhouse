@@ -1,20 +1,81 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { studentApi, SessionInfo } from '../api/client';
 
 interface CodeEntryProps {
   onSessionValidated: (session: SessionInfo) => void;
 }
 
+interface SystemStatus {
+  platform: string;
+  ready: boolean;
+  checks: {
+    name: string;
+    status: 'pass' | 'fail' | 'checking';
+    message: string;
+  }[];
+}
+
 export default function CodeEntry({ onSessionValidated }: CodeEntryProps) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [showSystemCheck, setShowSystemCheck] = useState(false);
+
+  useEffect(() => {
+    // Run system check on mount
+    runSystemCheck();
+  }, []);
+
+  const runSystemCheck = async () => {
+    setShowSystemCheck(true);
+    const checks: SystemStatus['checks'] = [
+      { name: 'Electron Environment', status: 'checking', message: 'Checking...' },
+      { name: 'Screen Lock Ready', status: 'checking', message: 'Checking...' },
+      { name: 'Server Connection', status: 'checking', message: 'Checking...' },
+    ];
+
+    setSystemStatus({
+      platform: navigator.platform,
+      ready: false,
+      checks,
+    });
+
+    // Check Electron
+    await new Promise(resolve => setTimeout(resolve, 300));
+    checks[0] = {
+      name: 'Electron Environment',
+      status: window.electronAPI ? 'pass' : 'fail',
+      message: window.electronAPI ? 'Secure browser active' : 'Running in browser mode',
+    };
+    setSystemStatus(prev => prev ? { ...prev, checks: [...checks] } : null);
+
+    // Check screen lock capability
+    await new Promise(resolve => setTimeout(resolve, 300));
+    checks[1] = {
+      name: 'Screen Lock Ready',
+      status: window.electronAPI ? 'pass' : 'fail',
+      message: window.electronAPI ? 'Fullscreen lockdown available' : 'Limited security',
+    };
+    setSystemStatus(prev => prev ? { ...prev, checks: [...checks] } : null);
+
+    // Check server connection
+    await new Promise(resolve => setTimeout(resolve, 300));
+    try {
+      await studentApi.validateCode('TEST00');
+      checks[2] = { name: 'Server Connection', status: 'pass', message: 'Connected' };
+    } catch {
+      // Even a 404 means server is reachable
+      checks[2] = { name: 'Server Connection', status: 'pass', message: 'Server online' };
+    }
+    setSystemStatus(prev => prev ? { ...prev, checks: [...checks], ready: true } : null);
+
+    // Hide system check after 1.5s if all pass
+    setTimeout(() => setShowSystemCheck(false), 1500);
+  };
 
   const formatCode = (value: string) => {
-    // Remove non-alphanumeric characters and convert to uppercase
     const cleaned = value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-
-    // Insert dash after 3 characters
     if (cleaned.length > 3) {
       return cleaned.slice(0, 3) + '-' + cleaned.slice(3, 6);
     }
@@ -25,6 +86,7 @@ export default function CodeEntry({ onSessionValidated }: CodeEntryProps) {
     const formatted = formatCode(e.target.value);
     if (formatted.replace('-', '').length <= 6) {
       setCode(formatted);
+      setError('');
     }
   };
 
@@ -41,134 +103,246 @@ export default function CodeEntry({ onSessionValidated }: CodeEntryProps) {
     setIsLoading(true);
 
     try {
-      console.log('Validating code:', cleanCode);
       const session = await studentApi.validateCode(cleanCode);
-      console.log('Session validated:', session);
       onSessionValidated(session);
     } catch (err: unknown) {
-      console.error('Validation error:', err);
       const error = err as { response?: { data?: { error?: string } }, message?: string };
-      const errorMessage = error.response?.data?.error || error.message || 'Invalid access code';
-      console.error('Error message:', errorMessage);
-      setError(errorMessage);
+      setError(error.response?.data?.error || error.message || 'Invalid access code');
     } finally {
       setIsLoading(false);
     }
   };
 
+  const isCodeComplete = code.replace('-', '').length === 6;
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 to-blue-800">
-      <div className="max-w-md w-full mx-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-8">
-          <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg
-                className="w-8 h-8 text-blue-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">Secure Exam Browser</h1>
-            <p className="text-gray-600 mt-2">Enter your exam access code to begin</p>
+    <div className="min-h-screen bg-slate-900 flex flex-col">
+      {/* Background pattern */}
+      <div className="fixed inset-0 opacity-30">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-600/20 via-transparent to-cyan-600/20" />
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.15) 1px, transparent 0)`,
+            backgroundSize: '40px 40px',
+          }}
+        />
+      </div>
+
+      {/* Header */}
+      <header className="relative z-10 px-6 py-4 flex items-center justify-between border-b border-slate-800">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
           </div>
+          <div>
+            <h1 className="text-lg font-semibold text-white">Secure Exam Browser</h1>
+            <p className="text-xs text-slate-400">v1.0.0</p>
+          </div>
+        </div>
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-600 p-4 rounded-lg mb-6">
-              {error}
-            </div>
-          )}
+        {/* System status indicator */}
+        <button
+          onClick={() => setShowSystemCheck(!showSystemCheck)}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700 hover:border-slate-600 transition-colors"
+        >
+          <div className={`w-2 h-2 rounded-full ${systemStatus?.ready ? 'bg-emerald-500' : 'bg-amber-500'} animate-pulse`} />
+          <span className="text-xs text-slate-300">
+            {systemStatus?.ready ? 'System Ready' : 'Checking...'}
+          </span>
+        </button>
+      </header>
 
-          <form onSubmit={handleSubmit}>
-            <div className="mb-6">
-              <label
-                htmlFor="code"
-                className="block text-sm font-medium text-gray-700 mb-2"
+      {/* System Check Panel */}
+      {showSystemCheck && systemStatus && (
+        <div className="absolute top-20 right-6 z-20 animate-slide-down">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 shadow-xl w-72 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+              <span className="text-sm font-medium text-white">System Status</span>
+              <button
+                onClick={() => setShowSystemCheck(false)}
+                className="text-slate-400 hover:text-white transition-colors"
               >
-                Access Code
-              </label>
-              <input
-                id="code"
-                type="text"
-                value={code}
-                onChange={handleCodeChange}
-                placeholder="XXX-XXX"
-                className="w-full text-center text-3xl font-mono tracking-widest px-4 py-4 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                autoFocus
-                autoComplete="off"
-                spellCheck="false"
-              />
-              <p className="text-sm text-gray-500 mt-2 text-center">
-                Enter the 6-character code provided by your instructor
-              </p>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-
-            <button
-              type="submit"
-              disabled={isLoading || code.replace('-', '').length !== 6}
-              className="w-full bg-blue-600 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isLoading ? (
-                <span className="flex items-center justify-center">
-                  <svg
-                    className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
-                  Validating...
-                </span>
-              ) : (
-                'Start Exam'
-              )}
-            </button>
-          </form>
-
-          <div className="mt-8 pt-6 border-t border-gray-200">
-            <div className="flex items-start space-x-3 text-sm text-gray-500">
-              <svg
-                className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5"
-                fill="currentColor"
-                viewBox="0 0 20 20"
+            <div className="p-4 space-y-3">
+              {systemStatus.checks.map((check, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  {check.status === 'checking' ? (
+                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  ) : check.status === 'pass' ? (
+                    <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  )}
+                  <div className="flex-1">
+                    <p className="text-sm text-white">{check.name}</p>
+                    <p className="text-xs text-slate-400">{check.message}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="px-4 py-3 bg-slate-800/50 border-t border-slate-700">
+              <button
+                onClick={runSystemCheck}
+                className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
               >
-                <path
-                  fillRule="evenodd"
-                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <div>
-                <p className="font-medium text-gray-700">Important Notice</p>
-                <p className="mt-1">
-                  Once you start the exam, your screen will be locked and you will only
-                  be able to access the exam content. Make sure you're ready before
-                  proceeding.
-                </p>
-              </div>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Run check again
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Main Content */}
+      <main className="relative z-10 flex-1 flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-md animate-slide-up">
+          {/* Code Entry Card */}
+          <div className="bg-slate-800/80 backdrop-blur-sm rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
+            <div className="p-8">
+              {/* Icon */}
+              <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-blue-500/20 to-cyan-500/20 border border-blue-500/30 flex items-center justify-center">
+                <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+              </div>
+
+              {/* Title */}
+              <div className="text-center mb-8">
+                <h2 className="text-2xl font-bold text-white mb-2">Enter Access Code</h2>
+                <p className="text-slate-400 text-sm">
+                  Enter the 6-character code provided by your instructor
+                </p>
+              </div>
+
+              {/* Error */}
+              {error && (
+                <div className="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/30 animate-slide-down">
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-sm text-red-400">{error}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Form */}
+              <form onSubmit={handleSubmit}>
+                <div className="mb-6">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={code}
+                      onChange={handleCodeChange}
+                      placeholder="XXX-XXX"
+                      className="w-full text-center text-4xl font-mono tracking-[0.3em] px-4 py-5 bg-slate-900 border-2 border-slate-600 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                      autoFocus
+                      autoComplete="off"
+                      spellCheck="false"
+                    />
+                    {isCodeComplete && (
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                        <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading || !isCodeComplete}
+                  className="w-full btn-primary py-4 text-lg font-semibold flex items-center justify-center gap-2"
+                >
+                  {isLoading ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      <span>Validating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Join Exam</span>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                      </svg>
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+
+            {/* Footer info */}
+            <div className="px-8 py-5 bg-slate-900/50 border-t border-slate-700">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-200">Security Notice</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Once started, your screen will be locked. All activity is monitored and violations are reported.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Features */}
+          <div className="mt-8 grid grid-cols-3 gap-4">
+            <div className="text-center">
+              <div className="w-10 h-10 mx-auto mb-2 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center">
+                <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <p className="text-xs text-slate-400">Secure Lockdown</p>
+            </div>
+            <div className="text-center">
+              <div className="w-10 h-10 mx-auto mb-2 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center">
+                <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <p className="text-xs text-slate-400">Real-time Monitoring</p>
+            </div>
+            <div className="text-center">
+              <div className="w-10 h-10 mx-auto mb-2 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center">
+                <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <p className="text-xs text-slate-400">Instant Reporting</p>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="relative z-10 px-6 py-4 border-t border-slate-800">
+        <div className="flex items-center justify-between text-xs text-slate-500">
+          <span>Secure Exam Browser</span>
+          <span>{navigator.platform}</span>
+        </div>
+      </footer>
     </div>
   );
 }

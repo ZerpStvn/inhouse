@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { studentApi } from '../api/client';
 
 interface ViolationNotification {
@@ -9,12 +9,38 @@ interface ViolationNotification {
   timestamp: Date;
 }
 
+interface LockPenalty {
+  isLocked: boolean;
+  lockEndTime: Date | null;
+  penaltyLevel: number;
+  remainingSeconds: number;
+}
+
+// Penalty durations in seconds for each level
+const PENALTY_DURATIONS = [
+  120,   // Level 1: 2 minutes
+  300,   // Level 2: 5 minutes
+  600,   // Level 3: 10 minutes
+  900,   // Level 4: 15 minutes
+  1800,  // Level 5+: 30 minutes
+];
+
 export default function ExamControls() {
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [startTime, setStartTime] = useState<Date | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
   const [currentWarning, setCurrentWarning] = useState<ViolationNotification | null>(null);
+  const [violationCount, setViolationCount] = useState(0);
+  const [isConnected, setIsConnected] = useState(true);
+  const [lockPenalty, setLockPenalty] = useState<LockPenalty>({
+    isLocked: false,
+    lockEndTime: null,
+    penaltyLevel: 0,
+    remainingSeconds: 0,
+  });
+
+  const lockIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const loadAttemptId = async () => {
@@ -27,12 +53,82 @@ export default function ExamControls() {
     loadAttemptId();
   }, []);
 
+  // Cleanup lock interval on unmount
+  useEffect(() => {
+    return () => {
+      if (lockIntervalRef.current) {
+        clearInterval(lockIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Handle penalty lock countdown
+  useEffect(() => {
+    if (lockPenalty.isLocked && lockPenalty.lockEndTime) {
+      lockIntervalRef.current = setInterval(() => {
+        const now = new Date();
+        const remaining = Math.max(0, Math.ceil((lockPenalty.lockEndTime!.getTime() - now.getTime()) / 1000));
+
+        if (remaining <= 0) {
+          setLockPenalty(prev => ({
+            ...prev,
+            isLocked: false,
+            lockEndTime: null,
+            remainingSeconds: 0,
+          }));
+          if (lockIntervalRef.current) {
+            clearInterval(lockIntervalRef.current);
+          }
+        } else {
+          setLockPenalty(prev => ({
+            ...prev,
+            remainingSeconds: remaining,
+          }));
+        }
+      }, 1000);
+
+      return () => {
+        if (lockIntervalRef.current) {
+          clearInterval(lockIntervalRef.current);
+        }
+      };
+    }
+  }, [lockPenalty.isLocked, lockPenalty.lockEndTime]);
+
+  // Apply penalty lock
+  const applyPenaltyLock = (newPenaltyLevel: number) => {
+    const durationIndex = Math.min(newPenaltyLevel - 1, PENALTY_DURATIONS.length - 1);
+    const lockDuration = PENALTY_DURATIONS[durationIndex];
+    const lockEndTime = new Date(Date.now() + lockDuration * 1000);
+
+    setLockPenalty({
+      isLocked: true,
+      lockEndTime,
+      penaltyLevel: newPenaltyLevel,
+      remainingSeconds: lockDuration,
+    });
+  };
+
   // Listen for violation reports from main process
   useEffect(() => {
     if (!window.electronAPI) return;
 
     const unsubscribe = window.electronAPI.onReportViolation(async (data) => {
       const { attemptId: id, violation } = data;
+
+      // Increment violation count
+      const newViolationCount = violationCount + 1;
+      setViolationCount(newViolationCount);
+
+      // Check if this is a serious violation that triggers a lock penalty
+      const seriousViolations = ['app_opened', 'shortcut_blocked'];
+      if (seriousViolations.includes(violation.type)) {
+        // Calculate new penalty level (every 2 serious violations increases penalty)
+        const newPenaltyLevel = Math.floor(newViolationCount / 2) + 1;
+        if (newPenaltyLevel > lockPenalty.penaltyLevel || !lockPenalty.isLocked) {
+          applyPenaltyLock(newPenaltyLevel);
+        }
+      }
 
       // Create warning notification
       const warning: ViolationNotification = {
@@ -60,13 +156,15 @@ export default function ExamControls() {
             details: violation.details,
           },
         });
+        setIsConnected(true);
       } catch (error) {
         console.error('Failed to report violation:', error);
+        setIsConnected(false);
       }
     });
 
     return unsubscribe;
-  }, []);
+  }, [violationCount, lockPenalty.penaltyLevel, lockPenalty.isLocked]);
 
   // Send heartbeat every 30 seconds
   useEffect(() => {
@@ -75,8 +173,10 @@ export default function ExamControls() {
     const interval = setInterval(async () => {
       try {
         await studentApi.heartbeat(attemptId);
+        setIsConnected(true);
       } catch (error) {
         console.error('Heartbeat failed:', error);
+        setIsConnected(false);
       }
     }, 30000);
 
@@ -97,12 +197,10 @@ export default function ExamControls() {
   }, [startTime]);
 
   const extractAppOrShortcutName = (type: string, description: string): string | undefined => {
-    // For app_opened: "Attempted to open: AppName"
     if (type === 'app_opened') {
       const match = description.match(/Attempted to open: (.+)/);
       return match ? match[1] : 'application';
     }
-    // For shortcut_blocked with Alt+Tab or Win+Tab
     if (type === 'shortcut_blocked') {
       if (description.includes('Alt+Tab')) {
         return 'Alt+Tab (Task Switcher)';
@@ -110,7 +208,6 @@ export default function ExamControls() {
       if (description.includes('Win+Tab')) {
         return 'Win+Tab (Task View)';
       }
-      // Other shortcuts
       const match = description.match(/Blocked: (.+)/);
       return match ? match[1] : undefined;
     }
@@ -143,6 +240,12 @@ export default function ExamControls() {
     if (hrs > 0) {
       return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatLockTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -163,70 +266,229 @@ export default function ExamControls() {
     }
   };
 
+  const getStatusColor = () => {
+    if (lockPenalty.isLocked) return 'from-orange-600 to-orange-700';
+    if (currentWarning) return 'from-red-600 to-red-700';
+    if (!isConnected) return 'from-amber-600 to-amber-700';
+    return 'from-slate-800 to-slate-900';
+  };
+
+  const getStatusBorder = () => {
+    if (lockPenalty.isLocked) return 'border-orange-500/50';
+    if (currentWarning) return 'border-red-500/50';
+    if (!isConnected) return 'border-amber-500/50';
+    return 'border-slate-600/50';
+  };
+
   return (
-    <div className="relative">
-      {/* Warning banner - shows above control bar when violation detected */}
-      {currentWarning && (
-        <div className="fixed top-[-80px] right-0 w-[300px] animate-slide-down">
-          <div className="bg-red-600 text-white rounded-lg shadow-2xl overflow-hidden">
+    <div className="relative font-sans">
+      {/* Lock Penalty Overlay */}
+      {lockPenalty.isLocked && (
+        <div className="fixed top-[-140px] right-0 w-[300px] animate-slide-down">
+          <div className="bg-gradient-to-r from-orange-600 to-orange-700 text-white rounded-xl shadow-2xl shadow-orange-500/30 overflow-hidden border border-orange-500/30">
             {/* Header */}
-            <div className="bg-red-700 px-3 py-1.5 flex items-center gap-2">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
-              <span className="text-xs font-semibold uppercase tracking-wide">Warning</span>
+            <div className="bg-orange-800/50 px-4 py-2 flex items-center gap-2">
+              <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center animate-pulse">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <span className="text-xs font-semibold uppercase tracking-wider">Penalty Lock Active</span>
             </div>
             {/* Content */}
-            <div className="px-3 py-2">
+            <div className="px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-orange-200">Level {lockPenalty.penaltyLevel} Penalty</span>
+                <span className="text-2xl font-mono font-bold">{formatLockTime(lockPenalty.remainingSeconds)}</span>
+              </div>
+              <div className="w-full bg-orange-800/50 rounded-full h-2 mb-2">
+                <div
+                  className="bg-white rounded-full h-2 transition-all duration-1000"
+                  style={{
+                    width: `${(lockPenalty.remainingSeconds / PENALTY_DURATIONS[Math.min(lockPenalty.penaltyLevel - 1, PENALTY_DURATIONS.length - 1)]) * 100}%`
+                  }}
+                />
+              </div>
+              <p className="text-xs text-orange-200">
+                Focus on your exam. Further violations will increase penalty time.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Warning banner - shows above control bar when violation detected */}
+      {currentWarning && !lockPenalty.isLocked && (
+        <div className="fixed top-[-90px] right-0 w-[300px] animate-slide-down">
+          <div className="bg-gradient-to-r from-red-600 to-red-700 text-white rounded-xl shadow-2xl shadow-red-500/30 overflow-hidden border border-red-500/30">
+            {/* Header */}
+            <div className="bg-red-800/50 px-4 py-2 flex items-center gap-2">
+              <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+              </div>
+              <span className="text-xs font-semibold uppercase tracking-wider">Security Alert</span>
+            </div>
+            {/* Content */}
+            <div className="px-4 py-3">
               {currentWarning.appName ? (
                 <>
-                  <p className="text-sm font-medium">
+                  <p className="text-xs text-red-200 font-medium">
                     {currentWarning.type === 'shortcut_blocked' ? 'Attempted to use:' : 'Attempting to open:'}
                   </p>
-                  <p className="text-lg font-bold">{currentWarning.appName}</p>
+                  <p className="text-base font-bold mt-0.5">{currentWarning.appName}</p>
                 </>
               ) : (
                 <p className="text-sm font-medium">{currentWarning.message}</p>
               )}
-              <p className="text-xs text-red-200 mt-1">Sent to your instructor</p>
+              <div className="flex items-center gap-1.5 mt-2 text-red-200">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span className="text-xs font-medium">Reported to instructor</span>
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {/* Main control bar */}
-      <div className={`h-[60px] w-[300px] flex items-center justify-between px-4 rounded-lg shadow-2xl border transition-colors duration-300 ${
-        currentWarning
-          ? 'bg-red-900 border-red-600'
-          : 'bg-slate-900 border-slate-700'
-      }`}>
-        <div className="flex items-center space-x-3">
-          <div className={`w-2 h-2 rounded-full animate-pulse ${
-            currentWarning ? 'bg-red-400' : 'bg-emerald-500'
-          }`}></div>
+      <div
+        className={`h-[60px] w-[300px] flex items-center justify-between px-3 rounded-xl shadow-2xl border transition-all duration-300 bg-gradient-to-r ${getStatusColor()} ${getStatusBorder()}`}
+      >
+        {/* Left section - Status */}
+        <div className="flex items-center gap-3">
+          {/* Status indicator */}
+          <div className="relative">
+            <div
+              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
+                lockPenalty.isLocked
+                  ? 'bg-orange-500/30'
+                  : currentWarning
+                  ? 'bg-red-500/30'
+                  : !isConnected
+                  ? 'bg-amber-500/30'
+                  : 'bg-emerald-500/20'
+              }`}
+            >
+              {lockPenalty.isLocked ? (
+                <svg className="w-5 h-5 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              ) : currentWarning ? (
+                <svg className="w-5 h-5 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+              ) : !isConnected ? (
+                <svg className="w-5 h-5 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414"
+                  />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                  />
+                </svg>
+              )}
+            </div>
+            {/* Pulse animation */}
+            <div
+              className={`absolute inset-0 rounded-lg animate-ping ${
+                lockPenalty.isLocked
+                  ? 'bg-orange-500/30'
+                  : currentWarning
+                  ? 'bg-red-500/30'
+                  : isConnected
+                  ? 'bg-emerald-500/20'
+                  : 'bg-amber-500/30'
+              }`}
+              style={{ animationDuration: '2s' }}
+            />
+          </div>
+
+          {/* Time and status text */}
           <div className="flex flex-col">
-            <span className="text-white text-xs font-medium">
-              {currentWarning ? 'Violation Detected' : 'Exam in Progress'}
+            <span
+              className={`text-lg font-mono font-bold tracking-wide ${
+                lockPenalty.isLocked ? 'text-orange-200' : currentWarning ? 'text-red-200' : 'text-white'
+              }`}
+            >
+              {lockPenalty.isLocked ? formatLockTime(lockPenalty.remainingSeconds) : formatTime(elapsedTime)}
             </span>
-            <span className={`text-sm font-mono ${
-              currentWarning ? 'text-red-300' : 'text-emerald-400'
-            }`}>
-              {formatTime(elapsedTime)}
-            </span>
+            <div className="flex items-center gap-1.5">
+              <div
+                className={`w-1.5 h-1.5 rounded-full ${
+                  lockPenalty.isLocked
+                    ? 'bg-orange-400'
+                    : currentWarning
+                    ? 'bg-red-400'
+                    : isConnected
+                    ? 'bg-emerald-400'
+                    : 'bg-amber-400'
+                } animate-pulse`}
+              />
+              <span className="text-[10px] text-slate-300 uppercase tracking-wide font-medium">
+                {lockPenalty.isLocked ? 'Locked' : currentWarning ? 'Alert' : isConnected ? 'Secure' : 'Offline'}
+              </span>
+              {violationCount > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-[9px] bg-red-500/30 text-red-300 rounded font-bold">
+                  {violationCount}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
+        {/* Right section - Finish button */}
         <button
           onClick={handleFinishExam}
           disabled={isFinishing}
-          className="bg-red-600 hover:bg-red-700 disabled:bg-slate-600 text-white px-4 py-1.5 rounded text-sm font-medium transition-colors"
+          className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          {isFinishing ? 'Finishing...' : 'Finish Exam'}
+          {isFinishing ? (
+            <>
+              <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
+              <span>Ending...</span>
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span>Finish</span>
+            </>
+          )}
         </button>
       </div>
 

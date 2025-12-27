@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import CodeEntry from './pages/CodeEntry';
 import ExamView from './pages/ExamView';
 import ExamControls from './pages/ExamControls';
@@ -7,11 +7,17 @@ import { SessionInfo, studentApi, AttemptInfo } from './api/client';
 
 type AppState = 'code_entry' | 'agreement' | 'exam';
 
+interface ErrorNotification {
+  id: string;
+  message: string;
+  type: 'error' | 'warning' | 'info';
+}
+
 function App() {
   const [state, setState] = useState<AppState>('code_entry');
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [attempt, setAttempt] = useState<AttemptInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<ErrorNotification[]>([]);
 
   // Check if we're in exam controls mode (small control bar)
   const isExamControls = window.location.hash === '#/exam-controls';
@@ -38,6 +44,20 @@ function App() {
     };
     checkExamMode();
   }, []);
+
+  const showNotification = (message: string, type: 'error' | 'warning' | 'info' = 'error') => {
+    const id = Date.now().toString();
+    setNotifications((prev) => [...prev, { id, message, type }]);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+    }, 5000);
+  };
+
+  const removeNotification = (id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
 
   const handleSessionValidated = (validatedSession: SessionInfo) => {
     setSession(validatedSession);
@@ -68,7 +88,7 @@ function App() {
       }
     } catch (err: unknown) {
       const error = err as { response?: { data?: { error?: string } } };
-      setError(error.response?.data?.error || 'Failed to start exam');
+      showNotification(error.response?.data?.error || 'Failed to start exam');
     }
   };
 
@@ -95,7 +115,7 @@ function App() {
   }
 
   return (
-    <div className="relative">
+    <div className="relative min-h-screen bg-slate-900">
       <CodeEntry onSessionValidated={handleSessionValidated} />
 
       {state === 'agreement' && session && (
@@ -106,17 +126,48 @@ function App() {
         />
       )}
 
-      {error && (
-        <div className="fixed bottom-4 right-4 bg-red-600 text-white px-4 py-2 rounded-lg shadow-lg">
-          {error}
-          <button
-            onClick={() => setError(null)}
-            className="ml-2 text-white hover:text-red-200"
+      {/* Notification Stack */}
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+        {notifications.map((notification) => (
+          <div
+            key={notification.id}
+            className={`animate-slide-up flex items-start gap-3 px-4 py-3 rounded-xl shadow-lg border backdrop-blur-sm max-w-sm ${
+              notification.type === 'error'
+                ? 'bg-red-500/90 border-red-400/50 text-white'
+                : notification.type === 'warning'
+                ? 'bg-amber-500/90 border-amber-400/50 text-white'
+                : 'bg-blue-500/90 border-blue-400/50 text-white'
+            }`}
           >
-            &times;
-          </button>
-        </div>
-      )}
+            {notification.type === 'error' && (
+              <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
+            {notification.type === 'warning' && (
+              <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            )}
+            {notification.type === 'info' && (
+              <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
+            <div className="flex-1">
+              <p className="text-sm font-medium">{notification.message}</p>
+            </div>
+            <button
+              onClick={() => removeNotification(notification.id)}
+              className="text-white/80 hover:text-white transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
